@@ -3,8 +3,31 @@
     SIGNED DATE AS THE OPPORTUNITY SIGNED DATE.
 */
 
+IF OBJECT_ID ('TEMPDB..#SignedOpportunities') IS NOT NULL 
+	DROP TABLE #SignedOpportunities
 
-SELECT OpportunityUID
+CREATE TABLE #SignedOpportunities (
+       OpportunityId NVARCHAR(255)
+     , OpportunityUID NVARCHAR(255)
+     , OpportunityName NVARCHAR(255)
+     , ClientId UNIQUEIDENTIFIER 
+     , ClientNumber NVARCHAR(255)
+     , HouseholdUID NVARCHAR(255)
+     , SignedAmountBase DECIMAL(18, 2) 
+     , SignedAmountUSD DECIMAL(18, 2)     
+     , TargetAssetsBase DECIMAL(18, 2)  
+     , TargetAssetsUSD DECIMAL(18, 2) 
+     , CurrencyCode NVARCHAR(25)
+     , OpportunityStartDate	DATETIME
+     , OpportunityEndDate DATETIME
+     , SourceSystemIndicator NVARCHAR(25)
+     , IsDeleted NVARCHAR(10)
+)
+
+
+;WITH SalesOpportunities AS ( 
+
+    SELECT OpportunityUID
 		 , OpportunityId 
 		 , LEFT(OpportunityName, 255) AS OpportunityName
 		 , ClientId
@@ -62,3 +85,74 @@ SELECT OpportunityUID
 		 , HouseholdUID
 		 , CurrencyCode
 		 , SourceSystemIndicator
+) 
+
+, OpportunitiesFinal AS ( 
+
+	SELECT OpportunityUID
+		 , OpportunityId
+		 , OpportunityName 
+		 , ClientId
+		 , ClientNumber		 
+		 , HouseholdUID
+		 , SignedAmountBase
+		 , TargetAssetsBase
+		 , CurrencyCode
+		 , OpportunityStartDate	
+		 , LEAD (OpportunityStartDate, 1, @MaxDateValue) OVER (PARTITION BY ISNULL(ClientNumber, HouseholdUID) ORDER BY OpportunityStartDate, OpportunityUID) AS OpportunityEndDate
+		 , SourceSystemIndicator
+	  FROM SalesOpportunities
+
+) 
+
+
+	INSERT
+	  INTO #SignedOpportunities (
+		   OpportunityUID
+		 , OpportunityId
+		 , OpportunityName 
+		 , ClientId
+		 , ClientNumber		 
+		 , HouseholdUID
+		 , SignedAmountBase
+		 , SignedAmountUSD		 
+		 , TargetAssetsBase
+		 , TargetAssetsUSD
+		 , CurrencyCode
+		 , OpportunityStartDate	
+		 , OpportunityEndDate
+		 , SourceSystemIndicator
+   )
+
+
+	SELECT OpportunityUID
+		 , OpportunityId
+		 , OpportunityName 
+		 , ClientId
+		 , ClientNumber		 
+		 , HouseholdUID
+		 , SignedAmountBase
+		 , CONVERT(DECIMAL(18,2), CASE 
+			  WHEN OPF.SignedAmountBase = 0 
+			  THEN 0 
+			  WHEN OPF.SignedAmountBase IS NULL OR CE.ExchangeRate IS NULL 
+			  THEN NULL
+			  ELSE OPF.SignedAmountBase/CE.ExchangeRate
+		   END) AS SignedAmountUSD		 
+		 , TargetAssetsBase
+		 , CONVERT(DECIMAL(18,2), CASE 
+			  WHEN OPF.TargetAssetsBase = 0 
+			  THEN 0 
+			  WHEN OPF.TargetAssetsBase IS NULL OR CE.ExchangeRate IS NULL 
+			  THEN NULL
+			  ELSE OPF.TargetAssetsBase/CE.ExchangeRate
+		   END) AS TargetAssetsUSD
+		 , CurrencyCode
+		 , OpportunityStartDate
+		 , OpportunityEndDate
+		 , SourceSystemIndicator
+      FROM OpportunitiesFinal AS OPF
+	  LEFT
+	  JOIN REF.CurrencyExchangeUSD AS CE
+	    ON OPF.CurrencyCode = CE.BaseCurrency
+	   AND CONVERT(DATE, OPF.OpportunityStartDate) = CONVERT(DATE, CE.EffectiveDate)
